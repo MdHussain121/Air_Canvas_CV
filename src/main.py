@@ -14,12 +14,39 @@ from ctypes import wintypes
 from hand_tracker import HandTracker
 from canvas import Canvas
 
+def enable_high_dpi_awareness():
+    """Ensures the application renders sharply on High DPI displays (Windows)."""
+    if os.name != 'nt': return
+    try:
+        # 1. Windows 10 1703+: Per Monitor V2 (Best)
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(-4)
+    except (AttributeError, OSError):
+        try:
+            # 2. Windows 8.1+: System DPI Aware
+            # PROCESS_SYSTEM_DPI_AWARE = 1
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except (AttributeError, OSError):
+            try:
+                # 3. Legacy Windows
+                ctypes.windll.user32.SetProcessDPIAware()
+            except (AttributeError, OSError):
+                pass
+
+def get_dpi_scale():
+    """Detects the current Windows DPI scale factor (e.g., 1.5 for 150%)."""
+    if os.name != 'nt': return 1.0
+    try:
+        # GetDpiForSystem is the most reliable for initial window sizing
+        return ctypes.windll.user32.GetDpiForSystem() / 96.0
+    except (AttributeError, OSError):
+        return 1.0
+
 # --- Global State ---
 WINDOW_NAME = "Air Canvas"
 CAM_WIDTH, CAM_HEIGHT = 1280, 720
 SHOW_LANDMARKS = True
 _ICON_HOLDER = []
-_ENUM_WINDOWS_CB = None
 
 class HandProcessor(threading.Thread):
     """Background worker for MediaPipe landmarker calls."""
@@ -77,6 +104,7 @@ def set_window_icon():
     except: pass
 
 def main():
+    enable_high_dpi_awareness()
     cap = cv2.VideoCapture(0)
     if not cap.isOpened(): return
 
@@ -85,8 +113,9 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
+    dpi_scale = get_dpi_scale()
     tracker = HandTracker(max_hands=2)
-    canvas  = Canvas(w, h)
+    canvas  = Canvas(w, h, dpi_scale=dpi_scale)
     processor = HandProcessor(tracker)
     processor.start()
 
@@ -120,8 +149,9 @@ def main():
             # Performance HUD
             fps = 1.0 / (time.time() - p_time + 1e-6)
             p_time = time.time()
-            cv2.rectangle(output, (10, h - 35), (120, h - 10), (15, 15, 15), -1)
-            cv2.putText(output, f"{int(fps)} FPS", (20, h - 18), 0, 0.4, (200, 200, 200), 1)
+            hud_w, hud_h = int(110 * dpi_scale), int(25 * dpi_scale)
+            cv2.rectangle(output, (10, h - hud_h - 10), (10 + hud_w, h - 10), (15, 15, 15), -1)
+            cv2.putText(output, f"{int(fps)} FPS", (20, h - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.4 * dpi_scale, (200, 200, 200), max(1, int(1 * dpi_scale)), cv2.LINE_AA)
 
             cv2.imshow(WINDOW_NAME, output)
             key = cv2.waitKey(1) & 0xFF

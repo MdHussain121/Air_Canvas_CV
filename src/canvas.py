@@ -15,9 +15,6 @@ COLORS = {
     "White": (240, 240, 240)
 }
 NAMES = list(COLORS.keys())
-SIZES = [4, 8, 14, 22]
-BAR_H, SWATCH_W = 90, 70
-
 # --- Aesthetic Settings ---
 UI_DARK, UI_GLASS, UI_BORDER = (15, 15, 15), 0.5, (80, 80, 80)
 NEON, GRAB = (255, 200, 0), (0, 100, 255)
@@ -53,8 +50,15 @@ class Stroke:
 
 class Canvas:
     """Unified interaction engine for multi-hand drawing and object manipulation."""
-    def __init__(self, w, h):
+    def __init__(self, w, h, dpi_scale=1.0):
         self.w, self.h = w, h
+        self.ds = dpi_scale
+        
+        # Scaled Design Tokens
+        self.bar_h = int(90 * self.ds)
+        self.swatch_w = int(70 * self.ds)
+        self.sizes = [int(s * self.ds) for s in [4, 8, 14, 22]]
+        
         self._strokes = []
         self._active_ids = {} # hand_id -> current stroke
         self._grabbed = {}    # hand_id -> grabbed stroke
@@ -75,7 +79,7 @@ class Canvas:
                 for d in [self._smooth_pts, self._active_ids, self._grabbed, self._prev_pp]:
                     if hid in d: del d[hid]
 
-        if not any(h['tip_pos'][1] < BAR_H for h in hands): self._btn_lock = False
+        if not any(h['tip_pos'][1] < self.bar_h for h in hands): self._btn_lock = False
 
         # 2. Process Interaction
         for h in hands:
@@ -83,7 +87,7 @@ class Canvas:
             pt = self._ema(h['tip_pos'], self._smooth_pts.get(hid))
             self._smooth_pts[hid] = pt
             
-            if pt[1] < BAR_H:
+            if pt[1] < self.bar_h:
                 self._handle_ui(pt)
                 self._active_ids[hid] = self._grabbed[hid] = None
                 if hid in self._pinching: self._pinching.remove(hid)
@@ -118,7 +122,7 @@ class Canvas:
                     self._pulses[hid] -= 0.1
             else:
                 color = self.color if h['is_drawing'] else NEON
-                cv2.circle(frame, pt, SIZES[self._s_idx]//2 + 6, color, 1, cv2.LINE_AA)
+                cv2.circle(frame, pt, self.sizes[self._s_idx]//2 + 6, color, 1, cv2.LINE_AA)
                 cv2.circle(frame, pt, 2, color, -1, cv2.LINE_AA)
 
         self._draw_toolbar(frame)
@@ -128,7 +132,7 @@ class Canvas:
     def color(self): return (0,0,0) if self._eraser else COLORS[NAMES[self._c_idx]]
 
     @property
-    def brush_size(self): return SIZES[self._s_idx] * (3 if self._eraser else 1)
+    def brush_size(self): return self.sizes[self._s_idx] * (3 if self._eraser else 1)
 
     def undo(self): 
         if self._strokes: self._strokes.pop()
@@ -177,40 +181,48 @@ class Canvas:
 
     def _draw_toolbar(self, frame):
         overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (self.w, BAR_H), UI_DARK, -1)
+        cv2.rectangle(overlay, (0, 0), (self.w, self.bar_h), UI_DARK, -1)
         cv2.addWeighted(overlay, UI_GLASS, frame, 1 - UI_GLASS, 0, frame)
-        cv2.line(frame, (0, BAR_H), (self.w, BAR_H), UI_BORDER, 1)
+        cv2.line(frame, (0, self.bar_h), (self.w, self.bar_h), UI_BORDER, 1, cv2.LINE_AA)
 
         for i, n in enumerate(NAMES):
-            cx = i * SWATCH_W + SWATCH_W // 2
-            if i == self._c_idx and not self._eraser: cv2.circle(frame, (cx, 35), 28, NEON, 2)
-            cv2.circle(frame, (cx, 35), 22, COLORS[n], -1)
-            cv2.putText(frame, n[:3].upper(), (i * SWATCH_W + 20, BAR_H - 12), 0, 0.35, (230,230,230), 1)
+            cx = int(i * self.swatch_w + self.swatch_w // 2)
+            cy = int(35 * self.ds)
+            if i == self._c_idx and not self._eraser: 
+                cv2.circle(frame, (cx, cy), int(28 * self.ds), NEON, max(1, int(2 * self.ds)), cv2.LINE_AA)
+            cv2.circle(frame, (cx, cy), int(22 * self.ds), COLORS[n], -1, cv2.LINE_AA)
+            cv2.putText(frame, n[:3].upper(), (int(i * self.swatch_w + 20 * self.ds), int(self.bar_h - 12 * self.ds)), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35 * self.ds, (230,230,230), max(1, int(1 * self.ds)), cv2.LINE_AA)
 
-        tx = len(NAMES) * SWATCH_W + 20
+        tx = int(len(NAMES) * self.swatch_w + 20 * self.ds)
+        btn_w, btn_gap = int(75 * self.ds), int(10 * self.ds)
         for i, lbl in enumerate(["UNDO", "ERASE", "CLEAR"]):
-            x = tx + i * 85
+            x = tx + i * (btn_w + btn_gap)
             clr = (0, 150, 255) if (lbl == "ERASE" and self._eraser) else (40, 40, 40)
-            cv2.rectangle(frame, (x, 20), (x + 75, BAR_H - 20), clr, -1)
-            cv2.putText(frame, lbl, (x + 12, BAR_H // 2 + 5), 0, 0.4, (255,255,255), 1)
+            cv2.rectangle(frame, (x, int(20 * self.ds)), (x + btn_w, int(self.bar_h - 20 * self.ds)), clr, -1, cv2.LINE_AA)
+            cv2.putText(frame, lbl, (x + int(12 * self.ds), int(self.bar_h // 2 + 5 * self.ds)), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4 * self.ds, (255,255,255), max(1, int(1 * self.ds)), cv2.LINE_AA)
 
-        sx = tx + 260
-        for j, sz in enumerate(SIZES):
-            scx = sx + j * 45
-            if j == self._s_idx: cv2.circle(frame, (scx, BAR_H // 2), sz // 2 + 5, NEON, 1)
-            cv2.circle(frame, (scx, BAR_H // 2), sz // 2 + 2, self.color, -1)
+        sx = tx + 3 * (btn_w + btn_gap) + int(10 * self.ds)
+        for j, sz in enumerate(self.sizes):
+            scx = int(sx + j * 45 * self.ds)
+            if j == self._s_idx: cv2.circle(frame, (scx, self.bar_h // 2), int(sz // 2 + 5 * self.ds), NEON, 1, cv2.LINE_AA)
+            cv2.circle(frame, (scx, self.bar_h // 2), int(sz // 2 + 2 * self.ds), self.color, -1, cv2.LINE_AA)
 
     def _handle_ui(self, pt):
         x, y = pt
-        if x < len(NAMES) * SWATCH_W:
-            self._c_idx, self._eraser = x // SWATCH_W, False
+        if x < len(NAMES) * self.swatch_w:
+            self._c_idx, self._eraser = x // self.swatch_w, False
         if self._btn_lock: return
 
-        tx = len(NAMES) * SWATCH_W + 20
-        if tx < x < tx + 75: self.undo()
-        elif tx + 85 < x < tx + 160: self._eraser, self._btn_lock = not self._eraser, True
-        elif tx + 170 < x < tx + 250: self.clear()
+        tx = len(NAMES) * self.swatch_w + 20 * self.ds
+        btn_w, btn_gap = 75 * self.ds, 10 * self.ds
         
-        sx = tx + 260
-        for j in range(len(SIZES)):
-            if abs(x - (sx + j * 45)) < 20: self._s_idx = j
+        if tx < x < tx + btn_w: self.undo()
+        elif tx + (btn_w + btn_gap) < x < tx + 2 * (btn_w + btn_gap): 
+            self._eraser, self._btn_lock = not self._eraser, True
+        elif tx + 2 * (btn_w + btn_gap) < x < tx + 3 * (btn_w + btn_gap): self.clear()
+        
+        sx = tx + 3 * (btn_w + btn_gap) + 10 * self.ds
+        for j in range(len(self.sizes)):
+            if abs(x - (sx + j * 45 * self.ds)) < 20 * self.ds: self._s_idx = j
